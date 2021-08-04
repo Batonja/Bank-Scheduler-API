@@ -4,6 +4,6 @@ import MainController from "../controllers/MainController";
 
 const mainRouter: Router = express.Router();
 
-mainRouter.get("/", asyncHandler(MainController.home));
+mainRouter.post("/api/main/login", asyncHandler(MainController.login));
 
 export default mainRouter;
