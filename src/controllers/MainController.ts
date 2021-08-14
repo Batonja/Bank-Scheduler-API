@@ -2,10 +2,14 @@ import { Request, Response } from "express";
 import MainService from "../services/implementations/MainService";
 
 class MainController {
-  public async login(req: Request, res: Response) {
-    const { username, password } = req.body;
+  public async updateMyFetchingPeriod(req: Request, res: Response) {
+    const { username, password, fetchingPeriondInHours } = req.body;
 
-    const response = await MainService.login(username, password);
+    const response = await MainService.updateMyFetchingPeriod(
+      username,
+      password,
+      fetchingPeriondInHours
+    );
 
     res.send(response);
   }
