@@ -3,10 +3,13 @@ import IMainService from "../interfaces/IMainService";
 import config from "../../../config.json";
 import amqp from "amqplib/callback_api";
 import BasicError from "../../errors/BasicError";
-import { channel } from "diagnostics_channel";
 
 class MainService implements IMainService {
-  public async login(username: string, password: string): Promise<string> {
+  public async updateMyFetchingPeriod(
+    username: string,
+    password: string,
+    fetchingPeriodInHours: number
+  ): Promise<string> {
     const url: string = config.baseURL + config.loginURL;
 
     const res = await axios.post(`${url}`, {
@@ -14,9 +17,9 @@ class MainService implements IMainService {
       password,
     });
 
-    const token = res.data;
+    const token: string = res.data;
 
-    this.sendToQueue();
+    this.sendToQueue(token, fetchingPeriodInHours);
     this.consumeFromQueue();
 
     return token;
@@ -39,8 +42,8 @@ class MainService implements IMainService {
 
         channel.consume(
           queue,
-          (msg) => {
-            console.log(`Received: ${msg?.content.toString("base64")}`);
+          (data) => {
+            console.log(`Received: ${data?.content.toString("base64")}`);
           },
           { noAck: true }
         );
@@ -50,7 +53,10 @@ class MainService implements IMainService {
     return true;
   }
 
-  public async sendToQueue(): Promise<boolean> {
+  public async sendToQueue(
+    token: string,
+    fetchingPeriodInHours: number
+  ): Promise<boolean> {
     amqp.connect("amqp://localhost", (error, connection) => {
       if (error) {
         const connectingError: BasicError = new BasicError(error.message, 500);
@@ -67,11 +73,12 @@ class MainService implements IMainService {
         }
 
         const queue = "theQueue";
-        const message = "msg";
+
+        const data = { token, fetchingPeriodInHours };
 
         channel.assertQueue(queue, { durable: false });
 
-        channel.sendToQueue(queue, Buffer.from(message, "base64"));
+        channel.sendToQueue(queue, Buffer.from(JSON.stringify(data), "base64"));
       });
     });
 

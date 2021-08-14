@@ -1,6 +1,10 @@
 interface IMainService {
-  sendToQueue(): Promise<boolean>;
-  login(username: string, password: string): Promise<string>;
+  sendToQueue(token: string, fetchingPeriodInHours: number): Promise<boolean>;
+  updateMyFetchingPeriod(
+    username: string,
+    password: string,
+    fetchingPeriodInHours: number
+  ): Promise<string>;
 }
 
 export default IMainService;
