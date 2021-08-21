@@ -24,7 +24,7 @@ function validateRequest(schema: any, objectName: string = "body") {
         error.property.length
       );
 
-      message += property.concat(error.message).concat("\n");
+      message += `${property} ${error.message}\n`;
     }
 
     throw new BasicError(message, 400);

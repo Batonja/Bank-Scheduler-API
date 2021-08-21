@@ -3,6 +3,8 @@ import IMainService from "../interfaces/IMainService";
 import config from "../../../config.json";
 import amqp from "amqplib/callback_api";
 import BasicError from "../../errors/BasicError";
+import { subHours } from "date-fns";
+import QueueData from "../../dtos/QueueData";
 
 class MainService implements IMainService {
   public async updateMyFetchingPeriod(
@@ -17,7 +19,7 @@ class MainService implements IMainService {
       password,
     });
 
-    const token: string = res.data;
+    const token: string = res.data.token;
 
     this.sendToQueue(token, fetchingPeriodInHours);
     this.consumeFromQueue();
@@ -25,7 +27,42 @@ class MainService implements IMainService {
     return token;
   }
 
-  public async consumeFromQueue(): Promise<boolean> {
+  public async sendAllScheduledRequests(): Promise<boolean> {
+    const dataFromQueue: QueueData[] = await this.consumeFromQueue();
+
+    for (const data of dataFromQueue) {
+      const shouldISendRequest = this.sendRequestIfItsTime(
+        data.lastFetchedDate,
+        data.fetchingPeriodInHours,
+        data.token
+      );
+    }
+  }
+
+  private async sendRequestForRandomStatement(token: string): Promise<boolean> {
+    const url: string = config.baseURL + config.getStatementURL;
+    const res = axios.get(url, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  private async sendRequestIfItsTime(
+    lastFetchedDate: Date,
+    fetchingPeriodInHours: number,
+    token: string
+  ): Promise<boolean> {
+    const timeOfNextFetch = subHours(new Date(), fetchingPeriodInHours);
+    let res;
+    if (timeOfNextFetch <= lastFetchedDate) {
+      res = await this.sendRequestForRandomStatement(token);
+      return true;
+    }
+
+    return false;
+  }
+
+  private async consumeFromQueue(): Promise<QueueData[]> {
+    const dataFromQueue: QueueData[] = [];
     amqp.connect("amqp://localhost", function (error, connection) {
       if (error) {
         throw error;
@@ -43,14 +80,18 @@ class MainService implements IMainService {
         channel.consume(
           queue,
           (data) => {
-            console.log(`Received: ${data?.content.toString("base64")}`);
+            const receivedObject = JSON.parse(
+              data ? data.content.toString() : ""
+            );
+
+            dataFromQueue.push(receivedObject);
           },
           { noAck: true }
         );
       });
     });
 
-    return true;
+    return dataFromQueue;
   }
 
   public async sendToQueue(
@@ -74,11 +115,15 @@ class MainService implements IMainService {
 
         const queue = "theQueue";
 
-        const data = { token, fetchingPeriodInHours };
+        const data: QueueData = {
+          token,
+          fetchingPeriodInHours,
+          lastFetchedDate: new Date(),
+        };
 
         channel.assertQueue(queue, { durable: false });
 
-        channel.sendToQueue(queue, Buffer.from(JSON.stringify(data), "base64"));
+        channel.sendToQueue(queue, Buffer.from(JSON.stringify(data)));
       });
     });
 
