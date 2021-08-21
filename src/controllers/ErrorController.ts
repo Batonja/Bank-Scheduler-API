@@ -9,7 +9,9 @@ class ErrorController {
   ) {
     const { message, stack, statusCode } = error;
 
-    res.status(statusCode).send({ message, stack });
+    res
+      .status(statusCode ? statusCode : error.response.status)
+      .send({ message, stack });
   }
 }
 
