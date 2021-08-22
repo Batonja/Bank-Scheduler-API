@@ -5,6 +5,11 @@ import amqp from "amqplib/callback_api";
 import BasicError from "../../errors/BasicError";
 import { subHours } from "date-fns";
 import QueueData from "../../dtos/QueueData";
+import { ITransaction } from "../../model/Transaction";
+import TransactionRepo from "../../repository/implementations/TransactionRepo";
+import SyncronizationRepo from "../../repository/implementations/SyncronizationRepo";
+import { ISynchronization } from "../../model/Syncronization";
+import fs from "fs";
 
 class MainService implements IMainService {
   public async updateMyFetchingPeriod(
@@ -21,47 +26,102 @@ class MainService implements IMainService {
 
     const token: string = res.data.token;
 
-    this.sendToQueue(token, fetchingPeriodInHours);
-    this.consumeFromQueue();
+    const shouldISendToQueue = await MainService.sendRequestForRandomStatement(
+      token
+    );
+    if (shouldISendToQueue)
+      MainService.sendToQueue(token, fetchingPeriodInHours);
 
     return token;
   }
 
-  public async sendAllScheduledRequests(): Promise<boolean> {
-    const dataFromQueue: QueueData[] = await this.consumeFromQueue();
+  public static async sendAllScheduledRequests(
+    dataFromQueue: QueueData
+  ): Promise<boolean> {
+    const dataToReturnToQueue: QueueData[] = [];
 
-    for (const data of dataFromQueue) {
-      const shouldISendRequest = this.sendRequestIfItsTime(
-        data.lastFetchedDate,
-        data.fetchingPeriodInHours,
-        data.token
+    const shouldIReturnThisToQueue = await MainService.sendRequestIfItsTime(
+      dataFromQueue.lastFetchedDate,
+      dataFromQueue.fetchingPeriodInHours,
+      dataFromQueue.token
+    );
+
+    if (shouldIReturnThisToQueue) {
+      MainService.sendToQueue(
+        dataFromQueue.token,
+        dataFromQueue.fetchingPeriodInHours
       );
     }
+
+    return true;
   }
 
-  private async sendRequestForRandomStatement(token: string): Promise<boolean> {
-    const url: string = config.baseURL + config.getStatementURL;
-    const res = axios.get(url, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-  }
-
-  private async sendRequestIfItsTime(
+  private static async sendRequestIfItsTime(
     lastFetchedDate: Date,
     fetchingPeriodInHours: number,
     token: string
   ): Promise<boolean> {
-    const timeOfNextFetch = subHours(new Date(), fetchingPeriodInHours);
+    const timeSinceLastFetch =
+      new Date().getTime() - new Date(lastFetchedDate).getTime();
+    const hoursSinceLastFetch = new Date(timeSinceLastFetch).getHours();
+
     let res;
-    if (timeOfNextFetch <= lastFetchedDate) {
+    if (hoursSinceLastFetch >= fetchingPeriodInHours) {
       res = await this.sendRequestForRandomStatement(token);
-      return true;
+      return res;
     }
 
-    return false;
+    return true;
   }
 
-  private async consumeFromQueue(): Promise<QueueData[]> {
+  private static async sendRequestForRandomStatement(
+    token: string
+  ): Promise<boolean> {
+    const url: string = config.baseURL + config.getStatementURL;
+
+    let transaction: ITransaction = {} as ITransaction;
+    let syncronization: ISynchronization = {} as ISynchronization;
+    try {
+      const res = await axios.get(url, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      transaction = res.data;
+      syncronization.performedAt = new Date();
+      syncronization.successful = true;
+
+      TransactionRepo.create(transaction);
+      SyncronizationRepo.create(syncronization);
+    } catch (error) {
+      const response = error.response;
+      syncronization.performedAt = new Date();
+      syncronization.successful = false;
+      syncronization.errorMessage = error.message;
+
+      SyncronizationRepo.create(syncronization);
+
+      if (response.status === 409) return false;
+      else if (response.status === 500) {
+        const message = response.data.message;
+        const errorMessageToWrite: string = `${message} at ${new Date()}\r\n`;
+        this.writeToAFile(errorMessageToWrite);
+      }
+    }
+
+    return true;
+  }
+
+  private static async writeToAFile(message: string): Promise<boolean> {
+    fs.appendFile(config.errorFilePath, message, (err) => {
+      if (err) throw err;
+
+      console.log("File error.txt has been updated");
+    });
+
+    return true;
+  }
+
+  public async consumeFromQueue(): Promise<QueueData[]> {
     const dataFromQueue: QueueData[] = [];
     amqp.connect("amqp://localhost", function (error, connection) {
       if (error) {
@@ -83,8 +143,7 @@ class MainService implements IMainService {
             const receivedObject = JSON.parse(
               data ? data.content.toString() : ""
             );
-
-            dataFromQueue.push(receivedObject);
+            MainService.sendAllScheduledRequests(receivedObject);
           },
           { noAck: true }
         );
@@ -94,10 +153,10 @@ class MainService implements IMainService {
     return dataFromQueue;
   }
 
-  public async sendToQueue(
+  public static sendToQueue(
     token: string,
     fetchingPeriodInHours: number
-  ): Promise<boolean> {
+  ): boolean {
     amqp.connect("amqp://localhost", (error, connection) => {
       if (error) {
         const connectingError: BasicError = new BasicError(error.message, 500);
@@ -117,7 +176,9 @@ class MainService implements IMainService {
 
         const data: QueueData = {
           token,
-          fetchingPeriodInHours,
+          fetchingPeriodInHours: fetchingPeriodInHours
+            ? fetchingPeriodInHours
+            : 1,
           lastFetchedDate: new Date(),
         };
 
