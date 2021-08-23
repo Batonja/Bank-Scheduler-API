@@ -6,8 +6,10 @@
   "author": "Nedeljko <nedeljko.zekonja@marbleit.rs>",
   "license": "MIT",
   "dependencies": {
+    "@types/cron": "^1.7.3",
     "amqplib": "^0.8.0",
     "axios": "^0.21.1",
+    "cron": "^1.8.2",
     "date-fns": "^2.23.0",
     "express": "^4.17.1",
     "express-async-handler": "^1.1.4",
